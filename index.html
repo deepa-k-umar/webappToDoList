@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1e2f38">
+  <title>Monthly Todo</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div>
+        <p class="kicker">MONTHLY ORGANIZER</p>
+        <h1>My To-Do List</h1>
+      </div>
+      <div class="top-actions">
+        <button class="icon-button" id="todayButton" title="Jump to this month">Today</button>
+        <button class="icon-button" id="themeButton" title="Toggle color theme" aria-label="Toggle color theme">☼</button>
+      </div>
+    </header>
+
+    <section class="overview" aria-label="Task overview">
+      <div class="month-card">
+        <span class="month-label">Planning for</span>
+        <div class="month-control">
+          <button id="previousMonth" aria-label="Previous month">←</button>
+          <input id="monthPicker" type="month" aria-label="Select month">
+          <button id="nextMonth" aria-label="Next month">→</button>
+        </div>
+        <p id="monthName" class="month-name"></p>
+      </div>
+      <div class="stat"><span id="totalCount">0</span><small>visible tasks</small></div>
+      <div class="stat accent"><span id="openCount">0</span><small>still to do</small></div>
+      <div class="stat"><span id="doneCount">0</span><small>completed</small></div>
+    </section>
+
+    <section class="workspace">
+      <div class="toolbar">
+        <div class="segmented" role="group" aria-label="Task filter">
+          <button class="filter active" data-filter="all">All</button>
+          <button class="filter" data-filter="open">Open</button>
+          <button class="filter" data-filter="done">Done</button>
+        </div>
+        <label class="search"><span>⌕</span><input id="searchInput" type="search" placeholder="Search this month..." aria-label="Search tasks"></label>
+      </div>
+
+      <form id="addForm" class="add-form">
+        <input id="taskTitle" type="text" placeholder="What needs doing?" autocomplete="off" required>
+        <select id="frequency" aria-label="Repeat frequency"><option>Monthly</option><option>Quarterly</option></select>
+        <button class="primary" type="submit">Add task <span>＋</span></button>
+      </form>
+
+      <div class="list-heading"><h2 id="listHeading">Tasks</h2><button class="text-button" id="clearDone">Clear completed</button></div>
+      <div id="taskList" class="task-list"></div>
+      <div id="emptyState" class="empty-state" hidden><div class="empty-mark">○</div><h3>Nothing planned yet</h3><p>Add a task above and make this month feel lighter.</p></div>
+    </section>
+    <footer><span>Stored locally in this browser</span><div><button id="exportExcel" class="text-button">Export Excel</button><button id="resetData" class="text-button">Reset demo data</button></div></footer>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
