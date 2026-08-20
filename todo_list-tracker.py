@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import shutil
 import tkinter as tk
+from tkinter import ttk
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from uuid import uuid4
-from tkinter import messagebox, ttk
+from tkinter import messagebox, simpledialog
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
@@ -33,6 +34,7 @@ HEADERS = (
 	"Status",
 )
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+COMPLETION_DATE_FORMAT = "%Y-%b-%d"
 PENDING_STATUS = "Pending"
 DONE_STATUS = "Done"
 STANDARD_TASK_TEMPLATES = (
@@ -441,7 +443,12 @@ def complete_task(tasks: list[Task], task_number: int, selected_month: str) -> N
 	complete_tasks(tasks, [task_number], selected_month)
 
 
-def complete_tasks(tasks: list[Task], task_numbers: list[int], selected_month: str) -> None:
+def complete_tasks(
+	tasks: list[Task],
+	task_numbers: list[int],
+	selected_month: str,
+	completed_at: Optional[str] = None,
+) -> None:
 	# Resolve the displayed task numbers, mark each pending task done, and create its next instance.
 	visible_tasks = [
 		task for task in tasks
@@ -461,7 +468,7 @@ def complete_tasks(tasks: list[Task], task_numbers: list[int], selected_month: s
 	if not selected_tasks:
 		return
 
-	completed_at = now()
+	completed_at = completed_at or now()
 	created_next_month = 0
 	for task in selected_tasks:
 		task.completed_at = completed_at
@@ -613,6 +620,28 @@ def run() -> None:
 			print("Choose a number from 1 to 4.")
 
 
+def add_template_item(list_name: str, category: str, title: str, frequency: str) -> None:
+	"""Append a new category and task to the selected TaskSubTask list."""
+	sync_workbook()
+	workbook = load_workbook(DATA_FILE)
+	try:
+		if TEMPLATE_SHEET_NAME not in workbook.sheetnames:
+			workbook.create_sheet(TEMPLATE_SHEET_NAME)
+		worksheet = workbook[TEMPLATE_SHEET_NAME]
+		value_column = 1 if list_name == "Pune List" else 4
+		frequency_column = value_column + 1
+		worksheet.cell(1, value_column, list_name)
+		worksheet.cell(1, frequency_column, "Bill Frequency")
+		worksheet.cell(worksheet.max_row + 1, value_column, f"{category.strip()}-")
+		row_number = worksheet.max_row + 1
+		worksheet.cell(row_number, value_column, title.strip())
+		worksheet.cell(row_number, frequency_column, normalize_frequency(frequency))
+		workbook.save(DATA_FILE)
+	finally:
+		workbook.close()
+	sync_workbook()
+
+
 class TodoDesktopApp:
 	"""Small desktop interface for the Excel-backed todo tracker."""
 
@@ -622,37 +651,55 @@ class TodoDesktopApp:
 		self.root.geometry("1050x620")
 		self.tasks = load_tasks()
 		self.month_keys: dict[str, str] = {}
+		self.row_tasks: dict[str, Task] = {}
 		self.month_var = tk.StringVar()
 		self.list_var = tk.StringVar(value="Both")
+		self.filter_category_var = tk.StringVar(value="All categories")
+		self.frequency_var = tk.StringVar(value="All frequencies")
+		self.status_var_filter = tk.StringVar(value="All statuses")
+		self.status_message_var = tk.StringVar(value="Ready")
 		self.title_var = tk.StringVar()
 		self.numbers_var = tk.StringVar()
 		self.category_var = tk.StringVar()
+		self.edit_title_var = tk.StringVar()
+		self.edit_list_var = tk.StringVar()
+		self.edit_category_var = tk.StringVar()
+		self.edit_frequency_var = tk.StringVar()
+		self.edit_bill_month_var = tk.StringVar()
+		self.template_list_var = tk.StringVar(value="Pune List")
+		self.template_category_var = tk.StringVar()
+		self.template_title_var = tk.StringVar()
+		self.template_frequency_var = tk.StringVar(value="Monthly")
 		self.status_var = tk.StringVar(value="Ready")
+		self.month_combo: ttk.Combobox
+		self.list_combo: ttk.Combobox
+		self.filter_category_combo: ttk.Combobox
+		self.frequency_combo: ttk.Combobox
+		self.status_combo: ttk.Combobox
 		self.build_widgets()
 		self.refresh()
 
 	def build_widgets(self) -> None:
-		controls = ttk.Frame(self.root, padding=12)
-		controls.pack(fill="x")
-		ttk.Label(controls, text="Bill for the Month").grid(row=0, column=0, sticky="w")
-		self.month_combo = ttk.Combobox(controls, textvariable=self.month_var, state="readonly", width=10)
-		self.month_combo.grid(row=1, column=0, padx=(0, 12), sticky="w")
-		ttk.Label(controls, text="Task list").grid(row=0, column=1, sticky="w")
-		self.list_combo = ttk.Combobox(
-			controls,
-			textvariable=self.list_var,
-			values=("Both", "Pune List", "Gaya List"),
-			state="readonly",
-			width=14,
-		)
-		self.list_combo.grid(row=1, column=1, padx=(0, 12), sticky="w")
-		ttk.Button(controls, text="Create template tasks", command=self.create_template_tasks).grid(row=1, column=2, padx=4)
-		ttk.Button(controls, text="Refresh", command=self.refresh).grid(row=1, column=3, padx=4)
+		header = ttk.Frame(self.root, padding=(12, 12, 12, 0))
+		header.pack(fill="x")
+		tk.Label(header, text="Filter tasks", font=("TkDefaultFont", 10, "bold")).pack(side="left")
+		tk.Button(header, text="Create task", command=self.open_create_task_form).pack(side="left", padx=16)
 
-		custom = ttk.LabelFrame(self.root, text="Add custom task", padding=10)
-		custom.pack(fill="x", padx=12, pady=(0, 8))
-		ttk.Entry(custom, textvariable=self.title_var, width=55).pack(side="left", padx=(0, 8))
-		tk.Button(custom, text="Add", command=self.add_custom_task).pack(side="left")
+		filters = ttk.Frame(self.root, padding=10)
+		filters.pack(fill="x", padx=12, pady=(4, 12))
+		filter_definitions = (
+			("Month", "month_combo", self.month_var, 12),
+			("Category", "filter_category_combo", self.filter_category_var, 22),
+			("List", "list_combo", self.list_var, 14),
+			("Frequency", "frequency_combo", self.frequency_var, 14),
+			("Status", "status_combo", self.status_var_filter, 14),
+		)
+		for column, (label, attribute, variable, width) in enumerate(filter_definitions):
+			ttk.Label(filters, text=label).grid(row=0, column=column, padx=5, sticky="w")
+			combo = ttk.Combobox(filters, textvariable=variable, state="readonly", width=width)
+			combo.grid(row=1, column=column, padx=5, sticky="w")
+			combo.bind("<<ComboboxSelected>>", self.apply_filters)
+			setattr(self, attribute, combo)
 
 		table_frame = ttk.Frame(self.root, padding=(12, 0))
 		table_frame.pack(fill="both", expand=True)
@@ -667,22 +714,110 @@ class TodoDesktopApp:
 			self.tree.heading(column, text=labels[column])
 			self.tree.column(column, width=widths[column], anchor="w")
 		self.tree.tag_configure("pending", background="white")
+		self.tree.tag_configure("done", background="#C6EFCE")
 		self.tree.pack(side="left", fill="both", expand=True)
 		scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
 		scrollbar.pack(side="right", fill="y")
 		self.tree.configure(yscrollcommand=scrollbar.set)
+		self.empty_filter_message = ttk.Label(
+			table_frame,
+			text="Select your required filter above to see the tasks",
+			anchor="center",
+			font=("TkDefaultFont", 12),
+		)
 
-		complete = ttk.LabelFrame(self.root, text="Complete pending tasks", padding=10)
-		complete.pack(fill="x", padx=12, pady=8)
-		ttk.Label(complete, text="Task numbers (1, 3, 5):").pack(side="left")
-		ttk.Entry(complete, textvariable=self.numbers_var, width=18).pack(side="left", padx=6)
-		ttk.Button(complete, text="Complete by number", command=self.complete_by_number).pack(side="left", padx=4)
-		ttk.Label(complete, text="Category:").pack(side="left", padx=(18, 4))
-		self.category_combo = ttk.Combobox(complete, textvariable=self.category_var, state="readonly", width=22)
-		self.category_combo.pack(side="left", padx=4)
-		ttk.Button(complete, text="Complete category", command=self.complete_by_category).pack(side="left", padx=4)
+		operation = ttk.Frame(self.root, padding=12)
+		operation.pack(fill="x")
+		tk.Button(operation, text="Mark selected tasks as completed", command=self.complete_selected_rows).pack(side="left", padx=(0, 8))
+		tk.Button(operation, text="Save", command=self.save_from_ui).pack(side="left", padx=4)
+		tk.Button(operation, text="Clear", command=self.clear_from_ui).pack(side="left", padx=4)
+		tk.Button(operation, text="Exit", command=self.exit_from_ui).pack(side="left", padx=4)
+		tk.Label(operation, textvariable=self.status_message_var).pack(side="left", padx=16)
 
-		tk.Label(self.root, textvariable=self.status_var, anchor="w").pack(fill="x", padx=12, pady=(0, 8))
+	def open_create_task_form(self) -> None:
+		form = tk.Toplevel(self.root)
+		form.title("Create task")
+		form.resizable(False, False)
+		form.transient(self.root)
+		form.grab_set()
+
+		list_var = tk.StringVar(value="Pune List")
+		category_var = tk.StringVar()
+		title_var = tk.StringVar()
+		frequency_var = tk.StringVar(value="Monthly")
+		bill_month_var = tk.StringVar(value=datetime.now().strftime("%b").upper())
+
+		fields = ttk.Frame(form, padding=16)
+		fields.pack(fill="both", expand=True)
+		category_options = sorted({
+			(task.category or "General")
+			for task in self.tasks
+		} | {
+			category
+			for list_name in ("Pune List", "Gaya List")
+			for category, _title, _frequency in read_template_items(list_name)
+		})
+		if category_options:
+			category_var.set(category_options[0])
+
+		controls = (
+			("List", ttk.Combobox(fields, textvariable=list_var, values=("Pune List", "Gaya List"), state="readonly", width=24)),
+			("Category", ttk.Combobox(fields, textvariable=category_var, values=category_options, state="readonly", width=24)),
+			("Task", ttk.Entry(fields, textvariable=title_var, width=27)),
+			("Frequency", ttk.Combobox(fields, textvariable=frequency_var, values=("Monthly", "Quarterly"), state="readonly", width=24)),
+			("Bill for Month", ttk.Combobox(fields, textvariable=bill_month_var, values=MONTH_OPTIONS, state="readonly", width=24)),
+		)
+		for row, (label, control) in enumerate(controls):
+			ttk.Label(fields, text=label).grid(row=row, column=0, padx=(0, 10), pady=5, sticky="w")
+			control.grid(row=row, column=1, pady=5, sticky="ew")
+
+		ttk.Label(fields, text="Status: Pending").grid(row=5, column=0, columnspan=2, pady=(8, 2), sticky="w")
+		tk.Label(fields, text="Created Date: automatic    Completed Date: blank").grid(row=6, column=0, columnspan=2, pady=2, sticky="w")
+
+		def create() -> None:
+			category = category_var.get().strip()
+			title = title_var.get().strip()
+			bill_for_month = bill_month_var.get().strip().upper()
+			if not category or not title or bill_for_month not in MONTH_OPTIONS:
+				messagebox.showwarning("Task details", "List, Category, Task, Frequency, and Bill for Month are required.", parent=form)
+				return
+			self.tasks.append(
+				Task(
+					id=uuid4().hex,
+					title=title,
+					created_at=now(),
+					month=month_key_for_bill(bill_for_month),
+					bill_for_month=bill_for_month,
+					list_name=list_var.get(),
+					category=category,
+					frequency=normalize_frequency(frequency_var.get()),
+				)
+			)
+			save_tasks(self.tasks)
+			form.destroy()
+			self.refresh()
+			self.status_message_var.set(f"Created task: {title}")
+
+		ttk.Button(fields, text="Create", command=create).grid(row=7, column=0, columnspan=2, pady=(12, 0))
+
+	def save_from_ui(self) -> None:
+		save_tasks(self.tasks)
+		self.status_message_var.set("Saved to both MyToDoList.xlsx locations.")
+
+	def clear_from_ui(self) -> None:
+		self.month_var.set("")
+		self.list_var.set("")
+		self.filter_category_var.set("")
+		self.frequency_var.set("")
+		self.status_var_filter.set("")
+		self.tree.selection_set(())
+		self.update_filter_categories()
+		self.populate_tasks()
+		self.status_message_var.set("Filters and selection cleared.")
+
+	def exit_from_ui(self) -> None:
+		save_tasks(self.tasks)
+		self.root.destroy()
 
 	def selected_month_key(self) -> str:
 		return self.month_keys.get(self.month_var.get(), datetime.now().strftime("%Y-%m"))
@@ -693,32 +828,93 @@ class TodoDesktopApp:
 		self.month_keys = {
 			datetime.strptime(value, "%Y-%m").strftime("%b").upper(): value for value in month_values
 		}
-		self.month_combo["values"] = list(self.month_keys)
+		self.month_combo["values"] = ["", *self.month_keys]
 		current_label = datetime.now().strftime("%b").upper()
 		self.month_var.set(current_label if current_label in self.month_keys else next(iter(self.month_keys)))
+		self.list_combo["values"] = ("", "Both", "Pune List", "Gaya List")
+		self.frequency_combo["values"] = ("", "All frequencies", "Monthly", "Quarterly")
+		self.status_combo["values"] = ("", "All statuses", PENDING_STATUS, DONE_STATUS)
+		if self.frequency_var.get() not in self.frequency_combo["values"]:
+			self.frequency_var.set("All frequencies")
+		if self.status_var_filter.get() not in self.status_combo["values"]:
+			self.status_var_filter.set("All statuses")
+		self.update_filter_categories()
 		self.populate_tasks()
+
+	def reset_filters(self) -> None:
+		self.list_var.set("Both")
+		self.filter_category_var.set("All categories")
+		self.refresh()
+
+	def apply_filters(self, _event: object = None) -> None:
+		self.update_filter_categories()
+		self.populate_tasks()
+
+	def update_filter_categories(self) -> None:
+		selected_month = self.selected_month_key()
+		selected_list = self.list_var.get()
+		selected_frequency = self.frequency_var.get()
+		categories = sorted({
+			task.category or "General"
+			for task in self.tasks
+			if task_month(task) == selected_month
+			and (not selected_list or selected_list == "Both" or task.list_name == selected_list)
+			and (not selected_frequency or selected_frequency == "All frequencies" or normalize_frequency(task.frequency) == selected_frequency)
+		})
+		values = ["", "All categories", *categories]
+		self.filter_category_combo["values"] = values
+		if self.filter_category_var.get() not in values:
+			self.filter_category_var.set("")
 
 	def pending_tasks(self) -> list[Task]:
 		selected_month = self.selected_month_key()
 		selected_list = self.list_var.get()
+		selected_category = self.filter_category_var.get()
+		selected_frequency = self.frequency_var.get()
 		return [
 			task for task in self.tasks
 			if task_month(task) == selected_month
 			and not task.is_done
-			and (selected_list == "Both" or task.list_name == selected_list)
+			and (not selected_list or selected_list == "Both" or task.list_name == selected_list)
+			and (not selected_category or selected_category == "All categories" or (task.category or "General") == selected_category)
+			and (not selected_frequency or selected_frequency == "All frequencies" or normalize_frequency(task.frequency) == selected_frequency)
+			and (not self.status_var_filter.get() or self.status_var_filter.get() in ("All statuses", PENDING_STATUS))
 		]
 
 	def populate_tasks(self) -> None:
 		for item in self.tree.get_children():
 			self.tree.delete(item)
-		pending = self.pending_tasks()
-		categories = sorted({task.category or "General" for task in pending})
-		self.category_combo["values"] = categories
-		if categories and self.category_var.get() not in categories:
-			self.category_var.set(categories[0])
-		for number, task in enumerate(pending, start=1):
-			self.tree.insert("", "end", values=(number, task.list_name or "", task.category or "General", task.title, normalize_frequency(task.frequency), bill_month(task), PENDING_STATUS), tags=("pending",))
-		self.status_var.set(f"{len(pending)} pending task(s) for {self.month_var.get()}")
+		filters_are_clear = not any((
+			self.month_var.get(),
+			self.filter_category_var.get(),
+			self.list_var.get(),
+			self.frequency_var.get(),
+			self.status_var_filter.get(),
+		))
+		if filters_are_clear:
+			self.empty_filter_message.place(relx=0.5, rely=0.5, anchor="center")
+			self.status_message_var.set("Select a filter to display tasks.")
+			self.row_tasks.clear()
+			return
+		self.empty_filter_message.place_forget()
+		selected_month = self.selected_month_key()
+		selected_list = self.list_var.get()
+		selected_category = self.filter_category_var.get()
+		selected_frequency = self.frequency_var.get()
+		selected_status = self.status_var_filter.get()
+		visible = [
+			task for task in self.tasks
+			if task_month(task) == selected_month
+			and (not selected_list or selected_list == "Both" or task.list_name == selected_list)
+			and (not selected_category or selected_category == "All categories" or (task.category or "General") == selected_category)
+			and (not selected_frequency or selected_frequency == "All frequencies" or normalize_frequency(task.frequency) == selected_frequency)
+			and (not selected_status or selected_status == "All statuses" or (DONE_STATUS if task.is_done else PENDING_STATUS) == selected_status)
+		]
+		self.row_tasks.clear()
+		for number, task in enumerate(visible, start=1):
+			iid = self.tree.insert("", "end", values=(number, task.list_name or "", task.category or "General", task.title, normalize_frequency(task.frequency), bill_month(task), DONE_STATUS if task.is_done else PENDING_STATUS), tags=("done" if task.is_done else "pending",))
+			self.row_tasks[iid] = task
+		self.status_message_var.set(f"Showing {len(visible)} task(s) for {self.month_var.get()}")
 
 	def create_template_tasks(self) -> None:
 		month = self.month_var.get()
@@ -737,6 +933,57 @@ class TodoDesktopApp:
 		self.title_var.set("")
 		self.refresh()
 
+	def load_selected_task(self, _event: object = None) -> None:
+		selection = self.tree.selection()
+		if len(selection) != 1:
+			return
+		task = self.row_tasks[selection[0]]
+		if task.is_done:
+			self.clear_edit_fields()
+			return
+		self.edit_title_var.set(task.title)
+		self.edit_list_var.set(task.list_name or "")
+		self.edit_category_var.set(task.category or "")
+		self.edit_frequency_var.set(normalize_frequency(task.frequency))
+		self.edit_bill_month_var.set(bill_month(task))
+
+	def clear_edit_fields(self) -> None:
+		for variable in (self.edit_title_var, self.edit_list_var, self.edit_category_var, self.edit_frequency_var, self.edit_bill_month_var):
+			variable.set("")
+
+	def update_selected_task(self) -> None:
+		selection = self.tree.selection()
+		if len(selection) != 1:
+			messagebox.showinfo("Select one task", "Select one pending task to edit.")
+			return
+		task = self.row_tasks[selection[0]]
+		if task.is_done:
+			messagebox.showinfo("Completed task", "Completed tasks cannot be modified.")
+			return
+		if not self.edit_title_var.get().strip() or not self.edit_bill_month_var.get():
+			messagebox.showwarning("Task details", "Task title and billing month are required.")
+			return
+		task.title = self.edit_title_var.get().strip()
+		task.list_name = self.edit_list_var.get() or None
+		task.category = self.edit_category_var.get().strip() or None
+		task.frequency = normalize_frequency(self.edit_frequency_var.get())
+		task.bill_for_month = self.edit_bill_month_var.get()
+		task.month = month_key_for_bill(task.bill_for_month)
+		save_tasks(self.tasks)
+		self.refresh()
+
+	def add_new_template(self) -> None:
+		category = self.template_category_var.get().strip()
+		title = self.template_title_var.get().strip()
+		if not category or not title:
+			messagebox.showwarning("Template task", "Category and task title are required.")
+			return
+		add_template_item(self.template_list_var.get(), category, title, self.template_frequency_var.get())
+		self.template_category_var.set("")
+		self.template_title_var.set("")
+		self.tasks = load_tasks()
+		messagebox.showinfo("Template task", "Task added to TaskSubTask.")
+
 	def complete_by_number(self) -> None:
 		try:
 			numbers = [int(value.strip()) for value in self.numbers_var.get().split(",") if value.strip()]
@@ -750,6 +997,30 @@ class TodoDesktopApp:
 	def complete_by_category(self) -> None:
 		category = self.category_var.get()
 		self.complete_selected([task for task in self.pending_tasks() if (task.category or "General") == category])
+
+	def complete_selected_rows(self) -> None:
+		selected_tasks = [self.row_tasks[item] for item in self.tree.selection() if not self.row_tasks[item].is_done]
+		if not selected_tasks:
+			messagebox.showinfo("No pending tasks", "Select one or more pending tasks.")
+			return
+		completion_date = simpledialog.askstring(
+			"Completion date",
+			"Enter completion date (YYYY-MMM-DD, for example 2026-AUG-20):",
+			initialvalue=datetime.now().strftime(COMPLETION_DATE_FORMAT).upper(),
+			parent=self.root,
+		)
+		if completion_date is None:
+			return
+		try:
+			completed_date = datetime.strptime(completion_date.strip().upper(), COMPLETION_DATE_FORMAT)
+		except ValueError:
+			messagebox.showwarning("Invalid date", f"Use this format: {COMPLETION_DATE_FORMAT.upper()} (example: 2026-AUG-20)")
+			return
+		pending = self.pending_tasks()
+		selected_ids = {task.id for task in selected_tasks}
+		numbers = [number for number, task in enumerate(pending, start=1) if task.id in selected_ids]
+		complete_tasks(self.tasks, numbers, self.selected_month_key(), completed_date.strftime(COMPLETION_DATE_FORMAT).upper())
+		self.refresh()
 
 	def complete_selected(self, selected_tasks: list[Task]) -> None:
 		if not selected_tasks:
@@ -768,4 +1039,4 @@ def run_gui() -> None:
 
 
 if __name__ == "__main__":
-	run()
+	run_gui()
